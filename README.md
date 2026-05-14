@@ -6,17 +6,72 @@ Script de instalação automática que configura, num único comando:
 2. **MCP `infoco`** (SICC compras.app.br) registrado no OpenCode
 3. **Skill `sicc-cadastros`** instalada em `~/.claude/skills/` — cadastra contratos, ARPs e aditivos no SICC com fluxo autônomo
 
-## Instalação (1 linha)
+## Instalação (1 linha por sistema)
 
-Abre um terminal **no seu computador** (Linux ou macOS) e cola:
+Substitui `SUA_CHAVE_API` pela chave individual que você recebeu do Fernando.
+
+### 🐧 Fedora / Linux Mint / openSUSE / Arch
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nandovitor/OpenCode/master/setup-opencode-proxy.sh | bash -s SUA_CHAVE_API
 ```
 
-Substitui `SUA_CHAVE_API` pela chave individual que você recebeu do Fernando.
+Detecta automaticamente `dnf`/`apt`/`pacman` e instala todos os pacotes do sistema + libs Python.
 
-### Exemplo
+### 🐧 Ubuntu / Debian
+
+Mesmo comando do Fedora — o script detecta `apt` automaticamente:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nandovitor/OpenCode/master/setup-opencode-proxy.sh | bash -s SUA_CHAVE_API
+```
+
+**Nota Ubuntu 22.04+ / Debian 12+:** o script lida automaticamente com o erro PEP 668 ("externally-managed-environment") usando `--break-system-packages` no pip.
+
+### 🍎 macOS
+
+Mesmo comando:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nandovitor/OpenCode/master/setup-opencode-proxy.sh | bash -s SUA_CHAVE_API
+```
+
+Detecta `brew`. **Pré-requisito:** Homebrew instalado (https://brew.sh).
+
+### 🪟 Windows 10 / 11 (PowerShell — nativo, sem WSL)
+
+Abre o **PowerShell como Administrador** (clique direito no menu Iniciar → "Terminal (Admin)") e cola:
+
+```powershell
+$key = "SUA_CHAVE_API"
+iwr -useb https://raw.githubusercontent.com/nandovitor/OpenCode/master/setup-opencode-proxy.ps1 | iex
+Setup-OpenCodeProxy -ApiKey $key
+```
+
+O script:
+- Instala OpenCode (se não tiver), Pandoc, Poppler, Tesseract, LibreOffice, Java, Ghostscript, Python — tudo via `winget`
+- Configura `~/.config/opencode/opencode.json`
+- Salva `CLIPROXY_API_KEY` como variável de ambiente do usuário (persiste entre sessões)
+- Instala libs Python (pdfplumber, pymupdf, etc.)
+- Baixa a skill `sicc-cadastros`
+
+**Pré-requisitos Windows:**
+- Windows 10 versão 1809+ ou Windows 11 (vem com `winget`). Se não tiver, instala o "App Installer" da Microsoft Store.
+- OpenCode (se não tiver): `winget install anomalyco.opencode` ou `scoop install opencode`.
+
+### 🪟 Windows via WSL (alternativa — só se quiser tudo em Linux)
+
+Se preferir usar WSL (Ubuntu rodando dentro do Windows):
+
+```bash
+# 1) No PowerShell admin, instala WSL:
+wsl --install -d Ubuntu
+
+# 2) Reinicia, abre o Ubuntu, e roda:
+curl -fsSL https://raw.githubusercontent.com/nandovitor/OpenCode/master/setup-opencode-proxy.sh | bash -s SUA_CHAVE_API
+```
+
+### Exemplo (Linux/macOS)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nandovitor/OpenCode/master/setup-opencode-proxy.sh | bash -s cacaeb4f97f509e305cdbcb92126fac9479c4ea633a6a89f
@@ -157,7 +212,9 @@ Em alguns clientes você precisa referenciar explicitamente: peça *"Use a skill
 ```
 .
 ├── README.md                          (este arquivo)
-├── setup-opencode-proxy.sh            (script de instalação)
+├── setup-opencode-proxy.sh            (instalação Linux/macOS — bash)
+├── setup-opencode-proxy.ps1           (instalação Windows — PowerShell)
+├── update-skills.sh                   (atualiza só as skills, idempotente)
 └── skills/
     └── sicc-cadastros/
         └── SKILL.md                   (skill Claude pra cadastros no SICC)

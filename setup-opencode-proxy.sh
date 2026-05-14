@@ -252,14 +252,27 @@ fi
 # Instala libs Python via pip user (independente do PKG_MGR)
 if command -v pip3 >/dev/null 2>&1 || command -v pip >/dev/null 2>&1; then
   PIP="$(command -v pip3 || command -v pip)"
-  info "Instalando libs Python via $PIP (pdfplumber, pymupdf, python-docx, etc.)..."
-  if $PIP install --user --upgrade \
-      pdfplumber pypdf pymupdf python-docx openpyxl pandas \
-      "camelot-py[cv]" ocrmypdf 2>&1 | tail -3; then
+  PY_LIBS="pdfplumber pypdf pymupdf python-docx openpyxl pandas camelot-py[cv] ocrmypdf"
+  info "Instalando libs Python via $PIP ($PY_LIBS)..."
+
+  # PEP 668: Ubuntu 22.04+, Debian 12+, Fedora 38+ bloqueiam pip install fora de venv
+  # Tenta primeiro --user; se falhar com 'externally-managed-environment', tenta --break-system-packages
+  PIP_OUTPUT=$($PIP install --user --upgrade $PY_LIBS 2>&1)
+  PIP_EXIT=$?
+  if [ $PIP_EXIT -ne 0 ] && echo "$PIP_OUTPUT" | grep -q 'externally-managed-environment'; then
+    info "PEP 668 detectado (Ubuntu/Debian/Fedora moderno) — retentando com --break-system-packages..."
+    PIP_OUTPUT=$($PIP install --user --upgrade --break-system-packages $PY_LIBS 2>&1)
+    PIP_EXIT=$?
+  fi
+
+  if [ $PIP_EXIT -eq 0 ]; then
     ok "Libs Python instaladas (pdfplumber, camelot, pymupdf, python-docx, openpyxl, pandas, ocrmypdf)"
   else
-    warn "Falha em alguma lib Python. Tenta rodar manualmente depois:"
-    warn "  $PIP install --user --upgrade pdfplumber pymupdf python-docx openpyxl pandas \"camelot-py[cv]\" ocrmypdf"
+    warn "Falha em alguma lib Python. Última saída:"
+    echo "$PIP_OUTPUT" | tail -5
+    warn "Tenta rodar manualmente:"
+    warn "  $PIP install --user --upgrade --break-system-packages $PY_LIBS"
+    warn "Ou usa pipx: sudo $PKG_MGR install pipx && pipx ensurepath && for lib in $PY_LIBS; do pipx install \"\$lib\"; done"
   fi
 else
   warn "pip não encontrado — pulando libs Python. Instala pip primeiro e tenta de novo."
