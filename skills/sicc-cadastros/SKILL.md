@@ -359,30 +359,149 @@ Chame `cadastrar_aditivo_tool` com o payload. Reporte o ID retornado.
 
 ---
 
-## Extração de dados de documento (PDF/DOCX/TXT)
+## Extração de dados de documento (PDF/DOCX/DOC/XLSX/TXT/imagem)
 
-Quando o usuário enviar um arquivo:
+**Pré-requisito:** as ferramentas abaixo devem estar instaladas (o `setup-opencode-proxy.sh` instala automaticamente em máquinas novas). Antes de qualquer extração séria, **verifique** com:
 
-1. Use a ferramenta `Read` (ou equivalente da plataforma) para ler o conteúdo. Para PDF, pode ser necessário extrair texto via `pdftotext` ou similar disponível no shell.
-2. Identifique:
-   - **Número** (procure "Contrato Nº", "DL", "PE", "CRED", "INEX" seguido de identificador)
-   - **Data de assinatura** (procure "Aos X dias do mês de", ou data no rodapé)
-   - **Data de validade** (cláusula "Vigência" / "Prazo")
-   - **Objeto** (cláusula "Objeto" — texto completo)
-   - **Valor** (procure "R$ X,XX" ou "valor global de")
-   - **Contratado/Fornecedor**: razão social + CNPJ (procure "CNPJ")
-   - **Modalidade**: na cláusula "Considerando" ou "Fundamentação" (DL, PE, INEX, etc.)
-   - **Número do processo administrativo**: padrão "Processo Adm. Nº X" ou "Proc. X"
-   - **Unidade gestora**: cabeçalho ou "Por meio da Secretaria de..."
-   - **ITENS** (Anexo I, Tabela de Preços, Planilha Orçamentária, Mapa de Lances) — siga obrigatoriamente a seção "Extração de Itens" do Fluxo A. Para ARP, espere tabela longa (até 200+ linhas). Para contrato unitário, ainda assim monte 1 lote + 1 item.
+```bash
+which pandoc pdftotext tesseract libreoffice && \
+python3 -c "import pdfplumber, fitz, docx, openpyxl, pandas; print('OK')"
+```
 
-3. **Para PDFs com tabelas:** se o texto extraído estiver bagunçado/colunas misturadas, tente extrair de novo com modo de layout (`pdftotext -layout arquivo.pdf -`) ou similar. Tabelas em PDF perdem estrutura sem flag de layout — e itens em coluna ficam embaralhados.
+Se faltar alguma, instale com:
 
-4. **Para DOCX:** tabelas são preservadas em estrutura — extraia célula por célula.
+```bash
+sudo dnf install -y pandoc poppler-utils tesseract tesseract-langpack-por \
+  libreoffice-core libreoffice-writer libreoffice-calc java-21-openjdk-headless \
+  ghostscript python3-pip
+pip install --user --upgrade pdfplumber pypdf pymupdf python-docx openpyxl \
+  pandas "camelot-py[cv]" ocrmypdf
+```
 
-5. **Para imagens/PDFs escaneados:** se o texto não puder ser lido (PDF escaneado sem OCR), reporte ao usuário: "PDF parece escaneado/sem texto. Preciso de OCR ou que você cole os itens manualmente." NÃO cadastre nada cego.
+### Estratégia em cascata por formato
 
-6. Monte o payload conforme acima.
+| Formato | Tool primária | Fallback 1 | Fallback 2 |
+|---|---|---|---|
+| **PDF com tabelas** | `pdfplumber` (Python) | `camelot-py[cv]` | `pdftotext -layout` |
+| **PDF texto corrido** | `pymupdf` (fitz) | `pdftotext` | `pandoc` |
+| **PDF escaneado** | `ocrmypdf` + `pdfplumber` | `tesseract -l por` | manual |
+| **DOCX** | `python-docx` | `pandoc -t markdown` | `libreoffice --convert-to txt` |
+| **DOC (Word antigo)** | `libreoffice --headless --convert-to docx` + `python-docx` | `pandoc` | `antiword` |
+| **XLSX** | `openpyxl` ou `pandas.read_excel` | `libreoffice --convert-to csv` | — |
+| **XLS** | `pandas.read_excel(engine="xlrd")` | `libreoffice --convert-to xlsx` | — |
+| **TXT/MD** | leitura direta | — | — |
+| **Imagem (PNG/JPG)** | `tesseract -l por` | — | manual |
+
+### Procedimento para PDF com tabelas (caso comum: ARP/Anexo I)
+
+**SEMPRE prefira `pdfplumber` para tabelas — ele preserva colunas e detecta células multilinhas.**
+
+```python
+import pdfplumber, json
+items = []
+with pdfplumber.open('/tmp/documento.pdf') as pdf:
+    for page_num, page in enumerate(pdf.pages, 1):
+        # extract_tables() retorna list[list[list[str]]] — list de tabelas, list de linhas, list de células
+        for table in page.extract_tables():
+            for row in table:
+                # Filtra cabeçalhos e linhas vazias
+                if not row or not row[0] or not row[0].strip().isdigit():
+                    continue
+                items.append({
+                    'page': page_num,
+                    'cells': [c.strip() if c else '' for c in row]
+                })
+# Salvar bruto pra inspeção antes de mapear pros campos do SICC
+with open('/tmp/sicc-raw-items.json', 'w') as f:
+    json.dump(items, f, ensure_ascii=False, indent=2)
+print(f'Linhas extraídas: {len(items)}')
+```
+
+Depois disso, mapeia as células (`numero`, `descricao`, `quantidade`, `unidade`, `valor_unit`, `valor_total`) e grava no `/tmp/sicc-items.jsonl` da seção "Extração de Itens".
+
+### Se `pdfplumber` falhar (tabela sem bordas/visual)
+
+Tenta **`camelot-py`** (usa OpenCV pra detectar linhas):
+
+```python
+import camelot
+tables = camelot.read_pdf('/tmp/documento.pdf', pages='all', flavor='lattice')  # ou flavor='stream'
+for i, t in enumerate(tables):
+    t.to_csv(f'/tmp/sicc-camelot-{i}.csv')
+print(f'{len(tables)} tabelas detectadas')
+```
+
+`flavor='lattice'` pra tabelas com bordas; `flavor='stream'` pra tabelas sem bordas (detecta por espaçamento).
+
+### Se ainda falhar (PDF escaneado)
+
+Aplica OCR primeiro com `ocrmypdf` (mantém layout):
+
+```bash
+ocrmypdf -l por --skip-text /tmp/original.pdf /tmp/com-ocr.pdf
+```
+
+Depois extrai do `/tmp/com-ocr.pdf` usando `pdfplumber`.
+
+### Para DOCX (tabelas preservadas em estrutura)
+
+```python
+from docx import Document
+doc = Document('/tmp/documento.docx')
+for tbl_idx, table in enumerate(doc.tables):
+    for row in table.rows:
+        cells = [c.text.strip() for c in row.cells]
+        # mesma lógica de filtro: primeira célula é número de item
+```
+
+### Para DOC (Word antigo)
+
+```bash
+# Converte pra DOCX primeiro
+libreoffice --headless --convert-to docx /tmp/documento.doc --outdir /tmp/
+# Depois usa python-docx no .docx convertido
+```
+
+### Para XLSX/XLS (planilha — formato ideal)
+
+```python
+import pandas as pd
+df = pd.read_excel('/tmp/planilha.xlsx', sheet_name=None)  # dict {sheet: DataFrame}
+for sheet, table in df.items():
+    print(sheet, table.shape)
+    # Detectar coluna de número de item, descrição, qtd, etc.
+```
+
+**Se o usuário tiver xlsx, pede direto — é o formato que dá menos erro de extração.**
+
+### Para qualquer formato via `pandoc` (universal — fallback genérico)
+
+```bash
+pandoc /tmp/documento.{pdf,docx,html,rtf,odt} -t plain -o /tmp/documento.txt
+```
+
+Não preserva tabelas tão bem quanto as libs específicas, mas funciona pra texto narrativo.
+
+### Identificação de campos do CONTRATO/ARP (não dos itens)
+
+Independente da ferramenta acima, no texto extraído procure:
+
+- **Número** (Contrato Nº, DL, PE, CRED, INEX seguido de identificador)
+- **Data de assinatura** ("Aos X dias do mês de", ou data no rodapé)
+- **Data de validade** (cláusula "Vigência" / "Prazo")
+- **Objeto** (cláusula "Objeto" — texto completo)
+- **Valor** (R$ X,XX ou "valor global de")
+- **Contratado/Fornecedor**: razão social + CNPJ
+- **Modalidade** (na cláusula "Considerando" ou "Fundamentação")
+- **Número do processo administrativo** (padrão "Processo Adm. Nº X")
+- **Unidade gestora** (cabeçalho ou "Por meio da Secretaria de...")
+
+### Regras finais
+
+1. **Antes de declarar que a extração falhou**, tente PELO MENOS 2 das estratégias da cascata. Não desista no primeiro erro de `pdftotext`.
+2. **Linhas multilinhas em tabela** (caso real do contrato 188 TecCity — itens 66-68 do Lote VIII tinham unidade em linha separada): `pdfplumber.extract_tables()` resolve isso porque entende célula multi-row. Não confie em regex de uma linha só.
+3. **Se 3+ tentativas falharem**, peça ao usuário a planilha (xlsx/csv) — é honesto e mais rápido que cadastrar item errado.
+4. **NÃO cadastre nada cego.** Validação de contagem + soma das seções "Extração de Itens (CRÍTICO)" continua valendo.
 
 ---
 

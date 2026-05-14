@@ -33,7 +33,18 @@ curl -fsSL https://raw.githubusercontent.com/nandovitor/OpenCode/master/setup-op
 | 5 | Adiciona `CLIPROXY_API_KEY` no seu shell rc (bash/zsh/fish) |
 | 6 | Baixa a skill `sicc-cadastros` pra `~/.claude/skills/sicc-cadastros/SKILL.md` |
 | 7 | (se Claude Code CLI instalado) registra MCP infoco no Claude Code também |
-| 8 | Mostra como começar a usar |
+| 8 | Instala libs de extração de documentos (pandoc, pdfplumber, OCR, etc.) — **pede sudo** |
+| 9 | Mostra como começar a usar |
+
+### Libs instaladas no passo 8
+
+Auto-detecta `dnf` (Fedora), `apt` (Ubuntu/Debian), `pacman` (Arch) ou `brew` (macOS) e instala:
+
+**Sistema:** `pandoc`, `poppler-utils` (pdftotext), `tesseract` + langpack-por (OCR), `libreoffice` (DOC/XLS), `java` (pra camelot/tabula), `ghostscript`, `python3-pip`
+
+**Python (via pip --user):** `pdfplumber` (tabelas PDF), `pymupdf` (PDF rápido), `python-docx` (DOCX), `openpyxl` (XLSX), `pandas`, `camelot-py[cv]` (fallback tabelas), `ocrmypdf` (PDF escaneado)
+
+Essas libs são o que a skill `sicc-cadastros` usa pra extrair itens em cascata (tenta `pdfplumber` primeiro, cai pra `camelot`, depois `pdftotext -layout`, e por último OCR).
 
 ## Atualizando a skill depois (se já instalou antes)
 

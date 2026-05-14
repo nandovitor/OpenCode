@@ -214,7 +214,58 @@ else
   info "(A skill funciona no OpenCode mesmo sem Claude Code; o MCP infoco já está no opencode.json)"
 fi
 
-# --- 8) Tudo certo ---
+# --- 8) Instalar libs de extração de documentos (pandoc, pdfplumber, OCR, ...) ---
+echo ""
+info "Verificando libs de extração de documentos (pandoc, pdfplumber, OCR...)..."
+
+# Detecta gerenciador de pacotes
+if command -v dnf >/dev/null 2>&1; then
+  PKG_MGR="dnf"
+  PKG_INSTALL="sudo dnf install -y"
+  PKG_LIST="pandoc poppler-utils tesseract tesseract-langpack-por libreoffice-core libreoffice-writer libreoffice-calc java-21-openjdk-headless ghostscript python3-pip"
+elif command -v apt-get >/dev/null 2>&1; then
+  PKG_MGR="apt"
+  PKG_INSTALL="sudo apt-get install -y"
+  PKG_LIST="pandoc poppler-utils tesseract-ocr tesseract-ocr-por libreoffice-core libreoffice-writer libreoffice-calc default-jre-headless ghostscript python3-pip"
+elif command -v pacman >/dev/null 2>&1; then
+  PKG_MGR="pacman"
+  PKG_INSTALL="sudo pacman -S --noconfirm"
+  PKG_LIST="pandoc poppler tesseract tesseract-data-por libreoffice-fresh jre-openjdk-headless ghostscript python-pip"
+elif command -v brew >/dev/null 2>&1; then
+  PKG_MGR="brew"
+  PKG_INSTALL="brew install"
+  PKG_LIST="pandoc poppler tesseract tesseract-lang libreoffice openjdk ghostscript"
+else
+  warn "Gerenciador de pacotes não detectado (esperado dnf/apt/pacman/brew). Pulando."
+  PKG_MGR=""
+fi
+
+if [ -n "$PKG_MGR" ]; then
+  info "Detectado: $PKG_MGR — instalando libs do sistema (pode pedir sudo)..."
+  if $PKG_INSTALL $PKG_LIST 2>&1 | tail -5; then
+    ok "Pacotes do sistema instalados"
+  else
+    warn "Falha ao instalar pacotes do sistema. Continua mesmo assim."
+  fi
+fi
+
+# Instala libs Python via pip user (independente do PKG_MGR)
+if command -v pip3 >/dev/null 2>&1 || command -v pip >/dev/null 2>&1; then
+  PIP="$(command -v pip3 || command -v pip)"
+  info "Instalando libs Python via $PIP (pdfplumber, pymupdf, python-docx, etc.)..."
+  if $PIP install --user --upgrade \
+      pdfplumber pypdf pymupdf python-docx openpyxl pandas \
+      "camelot-py[cv]" ocrmypdf 2>&1 | tail -3; then
+    ok "Libs Python instaladas (pdfplumber, camelot, pymupdf, python-docx, openpyxl, pandas, ocrmypdf)"
+  else
+    warn "Falha em alguma lib Python. Tenta rodar manualmente depois:"
+    warn "  $PIP install --user --upgrade pdfplumber pymupdf python-docx openpyxl pandas \"camelot-py[cv]\" ocrmypdf"
+  fi
+else
+  warn "pip não encontrado — pulando libs Python. Instala pip primeiro e tenta de novo."
+fi
+
+# --- 9) Tudo certo ---
 echo ""
 echo -e "${G}═══════════════════════════════════════════════════════════${N}"
 echo -e "${G}  ✓ Tudo pronto!${N}"
