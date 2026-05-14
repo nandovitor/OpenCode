@@ -35,6 +35,22 @@ curl -fsSL https://raw.githubusercontent.com/nandovitor/OpenCode/master/setup-op
 | 7 | (se Claude Code CLI instalado) registra MCP infoco no Claude Code também |
 | 8 | Mostra como começar a usar |
 
+## Atualizando a skill depois (se já instalou antes)
+
+Sempre que o Fernando publicar uma melhoria na skill, **cada pessoa do time** pode atualizar a versão local com 1 linha:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nandovitor/OpenCode/master/update-skills.sh | bash
+```
+
+Esse comando:
+- Baixa a versão mais nova de cada skill publicada no repo
+- Compara com o que já está em `~/.claude/skills/`
+- Substitui só se houver diferença real
+- Reporta quantas skills foram atualizadas
+
+Não mexe em mais nada — só nas skills. Seguro rodar quantas vezes quiser.
+
 ## Depois de instalar
 
 ### Pra usar Claude no OpenCode
