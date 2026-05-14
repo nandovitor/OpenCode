@@ -114,67 +114,197 @@ Chame `cadastrar_contrato_ata` com o payload. Reporte o ID retornado.
 - **Mapa de Lances** (em pregão) — anexo separado às vezes
 - **ARP especificamente:** sempre tem tabela de itens com preços registrados — pode ter 1 a 200+ itens
 
+**⚠️ Por que precisa de batch mode (não ignore):** Modelos Claude têm limite de tokens **de saída** ~64k. Um payload com 1000 itens inline = ~200k tokens de saída → cortado em ~500 itens, e a contagem fica falsamente "OK" porque o modelo perdeu a referência da contagem original. **Resultado real observado: de 1000 itens, só 500 foram cadastrados.** Pra evitar isso, **TODO documento com >50 itens DEVE usar arquivo acumulador no disco** — não tentar montar o array `itens` direto na resposta.
+
 **Procedimento obrigatório de extração:**
 
-1. **Identifique a tabela de itens** no documento. Procure cabeçalhos como:
-   - "ITEM | DESCRIÇÃO | QUANTIDADE | UNID. | VALOR UNIT. | VALOR TOTAL"
-   - "Nº | Especificação | Qtd | Un | Preço Unit. | Preço Total"
-   - "LOTE 1 / LOTE 2 / ..." (quando há lotes separados)
+### 1. Identifique a tabela e CONTE os itens DE FORMA DETERMINÍSTICA
 
-2. **Conte os itens** ANTES de extrair. Exemplo: "tabela tem 47 linhas de item (números 1 a 47)". Esse número vai ser usado pra validar no fim.
+- Procure cabeçalhos como: `ITEM | DESCRIÇÃO | QUANTIDADE | UNID. | VALOR UNIT. | VALOR TOTAL` ou variações (`Nº | Especificação | Qtd | Un | Preço Unit. | Preço Total`)
+- Identifique lotes separados (`LOTE 1`, `LOTE 2`, ...) se houver
+- **Conte os itens com Bash, não de cabeça.** Use o número do item explícito no doc:
 
-3. **Extraia TODOS os itens**, linha por linha. Se a tabela quebrar entre páginas, continue na próxima. Se o documento tiver "(...continua)" ou "Continuação do Anexo I", siga até o final.
+```bash
+# Exemplo: PDF convertido pra texto em /tmp/doc.txt — conta linhas que começam com "ITEM N" ou "1\t", "2\t" etc.
+# Ajuste o padrão regex à estrutura específica do documento.
+grep -cE '^[[:space:]]*[0-9]+[[:space:]]+[A-Z]' /tmp/doc.txt > /tmp/sicc-doc-count.txt
+cat /tmp/sicc-doc-count.txt
+```
 
-4. **Estrutura de cada item:**
-   ```json
-   {
-     "numero": <int — número do item, geralmente 1, 2, 3, ...>,
-     "descricao": "<string — descrição completa, INCLUINDO especificação técnica/marca/modelo>",
-     "quantidade": <number>,
-     "unidade_medida": "<string — UN, KG, M, M², M³, L, SERV, HORA, MÊS, etc.>",
-     "valor_unitario": <number — em reais, sem máscara>,
-     "valor_total": <number — quantidade × valor_unitario>,
-     "marca": "<string — se aparecer 'Marca: X' ou 'Modelo: Y'>",
-     "codigo": "<string — se houver código de catálogo/CATMAT/CATSER>"
-   }
+- Confirme visualmente que o último item do doc tem o número que vc esperaria (ex: "tabela vai do item 1 ao 1000 → doc_count = 1000").
+- Persista o número: `echo "1000" > /tmp/sicc-doc-count.txt`
+
+### 2. Inicialize o arquivo acumulador de itens
+
+```bash
+# Limpe acumuladores anteriores
+rm -f /tmp/sicc-items.jsonl
+touch /tmp/sicc-items.jsonl
+```
+
+Vamos usar formato **JSONL** (1 item JSON por linha) — fácil de acrescentar incrementalmente e contar com `wc -l`.
+
+### 3. Extraia em LOTES (batches) de 50 itens, anexando ao arquivo
+
+**Regra inviolável:** se `doc_count > 50`, **NÃO tente** montar o array `itens` inline na resposta. Em vez disso:
+
+Para cada batch de 50 itens:
+
+1. Ler do documento APENAS os itens N até N+49
+2. Gerar 50 linhas JSON, **uma por linha** (JSONL):
+   ```jsonl
+   {"numero":1,"descricao":"...","quantidade":10,"unidade_medida":"UN","valor_unitario":15.50,"valor_total":155.00,"marca":"...","codigo":"..."}
+   {"numero":2,...}
+   ...
    ```
-
-5. **Estrutura de cada lote:**
-   ```json
-   {
-     "numero": <int — número do lote, geralmente 1>,
-     "itens": [<array de itens>],
-     "valor_total": <number — soma de valor_total dos itens>
-   }
+3. Apender ao arquivo com a tool `Write` em modo append, ou usar Bash:
+   ```bash
+   cat >> /tmp/sicc-items.jsonl <<'EOF'
+   {"numero":1,"descricao":...}
+   ...
+   EOF
    ```
+4. Após cada batch, **verifique** com `wc -l /tmp/sicc-items.jsonl` — confirme que cresceu por exatamente 50.
 
-6. **Casos especiais:**
-   - **Documento com 1 lote único contendo N itens:** monte como `lotes: [{ numero: 1, itens: [...N itens] }]`
-   - **Documento com múltiplos lotes (LOTE 1, LOTE 2, ...):** monte um objeto por lote, cada um com seus próprios itens
-   - **Contrato com 1 único item global (ex: "construção de prédio"):** ainda assim monte `lotes: [{ numero: 1, itens: [{ numero: 1, descricao: <objeto>, quantidade: 1, unidade_medida: "SERV", valor_unitario: <valor_contrato>, valor_total: <valor_contrato> }] }]`
-   - **Aditivo de quantitativo:** itens novos seguem mesma estrutura, em campo separado do aditivo (ver Fluxo B)
-   - **Texto narrativo sem tabela explícita:** procure padrões "fornecimento de X unidades de Y, valor unitário R$ Z" e gere o item a partir do texto
+Repita até cobrir todos os itens. Para 1000 itens = **20 iterações de 50**.
 
-7. **Marcas/modelos:** se a descrição diz "Notebook DELL Latitude 5430 i7 16GB SSD 512GB", extraia `descricao` completo + `marca: "DELL Latitude 5430"`. Não jogue a marca fora.
+**Por que 50 e não 100?** Cada item tem ~200-400 tokens (descrição longa + especificação). 50 itens = ~10-20k tokens por chamada Write — bem dentro do limite. 100 já fica apertado em documentos com descrição rica.
 
-8. **Validação obrigatória ANTES de chamar `cadastrar_contrato_ata`:**
+### 4. Estrutura de cada item (uma linha do JSONL)
 
-   ```
-   COUNT_DOC = número de itens contado no documento (passo 2)
-   COUNT_EXTRACTED = soma de itens em todos os lotes
-   SOMA_ITENS = soma de valor_total de todos os itens
-   VALOR_CONTRATO = contrato_ata.valor
+```json
+{
+  "numero": <int>,
+  "descricao": "<string completa — especificação técnica/marca/modelo INCLUSOS>",
+  "quantidade": <number>,
+  "unidade_medida": "<UN|KG|M|M²|M³|L|SERV|HORA|MÊS|...>",
+  "valor_unitario": <number sem máscara>,
+  "valor_total": <number — quantidade × valor_unitario>,
+  "marca": "<string — se houver>",
+  "codigo": "<string — CATMAT/CATSER se houver>",
+  "lote_numero": <int — opcional, só se múltiplos lotes>
+}
+```
 
-   Verificar:
-   ✓ COUNT_DOC == COUNT_EXTRACTED (mesma contagem)
-   ✓ |SOMA_ITENS - VALOR_CONTRATO| < 0.10 (diferença ≤ 10 centavos por arredondamento)
-   ```
+### 5. Validação determinística APÓS extração
 
-   Se **qualquer validação falhar:** PARE, reporte qual item pode ter sido pulado/duplicado, NÃO cadastre.
+**Execute esses comandos Bash. Se qualquer um falhar, PARE.**
 
-9. **Quantidades fracionárias:** aceite normalmente (ex: `quantidade: 12.5` para metros, kg, etc.).
+```bash
+DOC_COUNT=$(cat /tmp/sicc-doc-count.txt)
+EXTRACTED_COUNT=$(wc -l < /tmp/sicc-items.jsonl)
+echo "DOC_COUNT=$DOC_COUNT  EXTRACTED=$EXTRACTED_COUNT"
+[ "$DOC_COUNT" -eq "$EXTRACTED_COUNT" ] || { echo "✗ CONTAGEM DIVERGE — não cadastre"; exit 1; }
 
-10. **Valores em real:** sempre número, não string. "R$ 1.234,56" → `1234.56`. Nunca arredonde — preserve casas decimais.
+# Verifica que cada linha é JSON válido
+python3 -c "
+import json, sys
+with open('/tmp/sicc-items.jsonl') as f:
+    for i, line in enumerate(f, 1):
+        line = line.strip()
+        if not line: continue
+        try: json.loads(line)
+        except Exception as e: print(f'Linha {i} JSON inválido: {e}'); sys.exit(1)
+print('✓ JSONL válido')
+"
+
+# Verifica unicidade dos números de item (sem duplicatas, sem pulos)
+python3 -c "
+import json
+nums = []
+with open('/tmp/sicc-items.jsonl') as f:
+    for line in f:
+        line = line.strip()
+        if line: nums.append(json.loads(line)['numero'])
+expected = list(range(min(nums), max(nums)+1))
+missing = sorted(set(expected) - set(nums))
+dups = [n for n in set(nums) if nums.count(n) > 1]
+if missing: print(f'✗ NÚMEROS FALTANDO: {missing[:20]}{\"...\" if len(missing)>20 else \"\"}'); exit(1)
+if dups: print(f'✗ NÚMEROS DUPLICADOS: {dups[:20]}'); exit(1)
+print(f'✓ Sequência completa: {min(nums)}..{max(nums)} ({len(nums)} itens)')
+"
+
+# Soma dos valores fecha com o valor do contrato
+python3 -c "
+import json
+total = 0.0
+with open('/tmp/sicc-items.jsonl') as f:
+    for line in f:
+        line = line.strip()
+        if line: total += json.loads(line)['valor_total']
+print(f'SOMA_ITENS={total:.2f}')
+" > /tmp/sicc-soma.txt
+SOMA=$(cat /tmp/sicc-soma.txt | grep -oP '[\d.]+')
+echo "SOMA=$SOMA  VALOR_CONTRATO=$VALOR_CONTRATO"
+# Conferir: |SOMA - VALOR_CONTRATO| < 0.10
+```
+
+**Se contagem, sequência, JSON ou soma falharem → PARE, mostre qual item caiu fora, NÃO cadastre.**
+
+### 6. Monte o payload final lendo o JSONL
+
+**Não escreva os 1000 itens inline na sua resposta.** Use Python/jq pra montar o payload final do disco:
+
+```bash
+python3 <<'PYEOF'
+import json
+with open('/tmp/sicc-items.jsonl') as f:
+    itens = [json.loads(l) for l in f if l.strip()]
+
+# Agrupar por lote_numero (se existir) ou montar lote único
+from collections import defaultdict
+by_lot = defaultdict(list)
+for it in itens:
+    lot = it.pop('lote_numero', 1)
+    by_lot[lot].append(it)
+
+lotes = [
+    {
+        "numero": lot_num,
+        "itens": items_in_lot,
+        "valor_total": round(sum(i['valor_total'] for i in items_in_lot), 2)
+    }
+    for lot_num, items_in_lot in sorted(by_lot.items())
+]
+
+# Carregar template do payload (preenchido nos passos anteriores)
+payload = json.load(open('/tmp/sicc-payload-base.json'))
+payload['documentos'][0]['lotes'] = lotes
+json.dump(payload, open('/tmp/sicc-payload-final.json', 'w'), ensure_ascii=False, indent=2)
+print(f'Payload montado: {len(itens)} itens em {len(lotes)} lote(s)')
+PYEOF
+```
+
+### 7. Chame `cadastrar_contrato_ata` passando o payload final do disco
+
+Leia `/tmp/sicc-payload-final.json` e mande pra tool MCP. Se a tool aceitar string JSON direto, ótimo. Se aceitar objeto, parse antes.
+
+**Não tente reescrever os 1000 itens na chamada da tool** — passe o objeto Python/parsed JSON direto.
+
+### 8. Verificação pós-cadastro (não pular)
+
+Após o `cadastrar_contrato_ata` retornar sucesso com `id`, **chame `get_contratos_tool` (ou a tool de detalhe se houver) pra puxar o contrato recém-criado e contar os itens cadastrados**.
+
+```
+ITENS_CADASTRADOS = soma de itens em todos os lotes do contrato retornado
+Se ITENS_CADASTRADOS != DOC_COUNT → ALERTE e investigue (MCP pode ter truncado).
+```
+
+Se houver discrepância na resposta do MCP, **reporte ao usuário com clareza**: "MCP cadastrou X itens mas o documento tinha Y — investigar limite do servidor."
+
+### 9. Casos especiais
+
+- **Documento ≤ 50 itens:** pode montar inline na resposta (sem precisar de arquivo) — mas ainda valide contagem.
+- **Múltiplos lotes:** marque cada item com `lote_numero` no JSONL; o agrupamento é feito automaticamente no passo 6.
+- **Contrato unitário (1 item global, ex: "construção de prédio"):** `lotes: [{ numero: 1, itens: [{ numero: 1, descricao: <objeto>, quantidade: 1, unidade_medida: "SERV", valor_unitario: <valor>, valor_total: <valor> }] }]`
+- **Aditivo de quantitativo:** mesma estrutura, payload separado (ver Fluxo B).
+- **Texto narrativo sem tabela:** procure padrões "fornecimento de X unidades de Y, valor unitário R$ Z" — se houver muitos, ainda use batch mode.
+- **PDF escaneado:** se `pdftotext` retornar texto vazio/lixo, **PARE** e peça OCR ao usuário.
+
+### 10. Quantidade fracionária e formato de valor
+
+- `quantidade` aceita decimais (`12.5` para metros/kg).
+- Valor sempre número, nunca string. "R$ 1.234,56" → `1234.56`. **Não arredonde** — preserve casas decimais conforme documento.
 
 ---
 
@@ -267,12 +397,17 @@ Quando o usuário enviar um arquivo:
 - ❌ **Nunca** cadastre se a validação de itens falhar (contagem ou soma divergente). PARE e reporte.
 - ❌ **Nunca** descarte marca/modelo/código do item. Preserve na `descricao` e/ou `marca`/`codigo`.
 - ❌ **Nunca** invente quantidade ou valor unitário "pra fechar a conta". Se não bate, é erro de extração — releia o doc.
+- ❌ **Nunca** tente montar o array `itens` inline na resposta quando o doc tiver >50 itens. **Use SEMPRE** arquivo acumulador `/tmp/sicc-items.jsonl` (causa documentada: limite de 64k tokens de saída do Claude trunca em ~500 itens — perdeu 50% num teste real de 1000 itens).
+- ❌ **Nunca** assuma que `EXTRACTED == DOC_COUNT` mentalmente — valide com `wc -l` no arquivo JSONL e `diff` com a contagem do doc gravada em `/tmp/sicc-doc-count.txt`.
+- ❌ **Nunca** dispense a checagem pós-cadastro: depois do `cadastrar_contrato_ata` retornar sucesso, busque o contrato criado e confira que o número de itens cadastrados bate com o do documento.
 - ✅ **Sempre** rode resolução de IDs em paralelo quando possível (3 chamadas independentes em uma rodada).
 - ✅ **Sempre** valide formato de datas (ISO) e número (sem ponto de milhar).
-- ✅ **Sempre** conte itens ANTES de extrair e revalide a contagem ao final.
-- ✅ **Sempre** valide `soma de valor_total dos itens ≈ contrato_ata.valor` (diferença ≤ R$ 0,10).
+- ✅ **Sempre** conte itens ANTES de extrair (Bash + grep, gravado em arquivo) e revalide a contagem ao final (`wc -l`).
+- ✅ **Sempre** valide `soma de valor_total dos itens ≈ contrato_ata.valor` (diferença ≤ R$ 0,10) via script Python lendo o JSONL.
 - ✅ **Sempre** preserve a ordem dos itens conforme o documento (item 1 do doc = item 1 do payload).
-- ✅ **Sempre** reporte o ID do registro criado ao final.
+- ✅ **Sempre** extraia em batches de 50 quando `doc_count > 50`, gravando direto no JSONL e validando `wc -l` após cada batch (deve crescer exatamente 50).
+- ✅ **Sempre** monte o payload final via script Python lendo `/tmp/sicc-items.jsonl` — nunca digite os itens inline na resposta.
+- ✅ **Sempre** reporte o ID do registro criado ao final, junto com `itens_cadastrados=<N>/doc_count=<M>`.
 
 ---
 
@@ -286,11 +421,16 @@ Ao concluir o cadastro com sucesso, responda com:
 ID: <id>
 Tenant: <tenant_id>
 Número: <numero>
-<resumo de 1 linha com objeto, valor e fornecedor/contraparte>
+Itens: <N> cadastrados / <M> no documento  ← OBRIGATÓRIO mostrar essas 2 contagens
+Lotes: <K>
+Valor total: R$ <X>
+<resumo de 1 linha com objeto e fornecedor/contraparte>
 ```
+
+⚠️ Se `N != M`, **não** marque como sucesso — sinalize com `⚠ DIVERGÊNCIA` e descreva o que faltou.
 
 Ao falhar/parar:
 ```
-✗ Não cadastrei. Motivo: <duplicidade | ambiguidade | dado faltante>
+✗ Não cadastrei. Motivo: <duplicidade | ambiguidade | dado faltante | itens faltando>
 <o que preciso pra continuar, se aplicável>
 ```
