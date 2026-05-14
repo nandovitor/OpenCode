@@ -157,23 +157,42 @@ else
   echo "export CLIPROXY_API_KEY=$API_KEY" > "$RC"
 fi
 
-# --- 7) Instalar skill SICC + MCP no Codex CLI (sicc-codex-toolkit) ---
+# --- 7) Instalar skill Claude "sicc-cadastros" ---
 echo ""
-info "Instalando skill SICC + MCP no Codex (sicc-codex-toolkit)..."
+info "Instalando skill sicc-cadastros..."
 
-if ! command -v npx >/dev/null 2>&1; then
-  warn "npx não encontrado — pulando instalação do sicc-codex-toolkit."
-  warn "Pra instalar depois, primeiro instala Node.js e roda:"
-  warn "  npx --yes sicc-codex-toolkit@latest setup"
-  SKIPPED_SICC=1
-else
-  if npx --yes sicc-codex-toolkit@latest setup 2>&1 | tail -20; then
-    ok "Skill SICC + MCP instalados no Codex (~/.codex/)"
+SKILL_DIR="$HOME/.claude/skills/sicc-cadastros"
+SKILL_URL="https://raw.githubusercontent.com/nandovitor/OpenCode/master/skills/sicc-cadastros/SKILL.md"
+
+mkdir -p "$SKILL_DIR"
+if curl -fsSL "$SKILL_URL" -o "$SKILL_DIR/SKILL.md"; then
+  SIZE=$(wc -c < "$SKILL_DIR/SKILL.md")
+  if [ "$SIZE" -lt 500 ]; then
+    warn "SKILL.md baixou mas está suspeitamente pequeno ($SIZE bytes)"
   else
-    warn "sicc-codex-toolkit setup falhou — tenta rodar manualmente:"
-    warn "  npx --yes sicc-codex-toolkit@latest setup"
-    SKIPPED_SICC=1
+    ok "Skill instalada em $SKILL_DIR/SKILL.md ($SIZE bytes)"
   fi
+else
+  warn "Não consegui baixar a skill. Você pode baixar manualmente depois:"
+  warn "  mkdir -p $SKILL_DIR"
+  warn "  curl -fsSL $SKILL_URL -o $SKILL_DIR/SKILL.md"
+fi
+
+# Se Claude Code CLI estiver instalado, registrar o MCP infoco lá também
+if command -v claude >/dev/null 2>&1; then
+  if claude mcp list 2>/dev/null | grep -q '^infoco'; then
+    ok "MCP infoco já está registrado no Claude Code"
+  else
+    if claude mcp add infoco https://compras.app.br/mcp/documentos --transport http >/dev/null 2>&1; then
+      ok "MCP infoco registrado no Claude Code"
+    else
+      warn "Não consegui registrar MCP no Claude Code automaticamente."
+      warn "Roda manualmente: claude mcp add infoco https://compras.app.br/mcp/documentos --transport http"
+    fi
+  fi
+else
+  info "Claude Code CLI não está instalado neste PC — pulando registro do MCP no Claude Code"
+  info "(A skill funciona no OpenCode mesmo sem Claude Code; o MCP infoco já está no opencode.json)"
 fi
 
 # --- 8) Tudo certo ---
@@ -184,12 +203,8 @@ echo -e "${G}══════════════════════�
 echo ""
 echo "O que foi configurado:"
 echo "  ✓ OpenCode apontando pro proxy Claude da INFOCO"
-echo "  ✓ MCP infoco (SICC) registrado no OpenCode"
-if [ -z "${SKIPPED_SICC:-}" ]; then
-  echo "  ✓ Skill 'sicc-cadastrar-contrato' instalada no Codex (~/.codex/)"
-  echo "  ✓ MCP infoco também registrado no Codex (~/.codex/config.toml)"
-  echo "  ✓ Comando ${B}sicc-codex${N} disponível via ~/.codex/bin/"
-fi
+echo "  ✓ MCP infoco (SICC) registrado no opencode.json"
+echo "  ✓ Skill 'sicc-cadastros' instalada em ~/.claude/skills/"
 echo ""
 echo "Pra começar a usar:"
 echo ""
@@ -207,13 +222,13 @@ echo "  • Claude Sonnet 4.5      (equilíbrio — recomendado pra trabalho)"
 echo "  • Claude Haiku 4.5       (rápido e barato — chat curto)"
 echo "  • Claude Opus 4.5        (alternativa ao 4.7)"
 echo ""
-if [ -z "${SKIPPED_SICC:-}" ]; then
-  echo "Pra extração robusta de PDF/DOCX no SICC (opcional):"
-  echo "  ${B}sicc-codex bootstrap-python${N}"
-  echo ""
-fi
-echo "Quando usar o MCP infoco pela primeira vez, o OpenCode vai abrir"
-echo "uma tela de OAuth pra você logar no SICC com sua conta da INFOCO."
+echo "Pra cadastrar contrato/ARP/aditivo, é só pedir naturalmente:"
+echo "  • \"Cadastra esse contrato no SICC\" + anexa o PDF"
+echo "  • \"Cria uma ARP da DL 037/2026\""
+echo "  • \"Registra aditivo de prazo no contrato 170 até 31/12\""
+echo ""
+echo "Na primeira vez que usar o MCP infoco, o OpenCode vai abrir uma tela"
+echo "de OAuth pra você logar no SICC com sua conta da INFOCO."
 echo ""
 echo "Dúvidas? Fala com o Fernando."
 echo ""
