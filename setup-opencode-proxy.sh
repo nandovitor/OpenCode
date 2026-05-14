@@ -113,6 +113,25 @@ cat > "$OPENCODE_CONFIG" <<'EOF'
         "claude-opus-4-5-latest": {
           "name": "Claude Opus 4.5",
           "limit": { "context": 200000, "output": 32768 }
+        },
+        "gpt-5.4": {
+          "name": "GPT-5.4 (flagship OpenAI)",
+          "limit": { "context": 200000, "output": 65536 }
+        },
+        "gpt-5.4-mini": {
+          "name": "GPT-5.4 Mini (rápido/barato)",
+          "limit": { "context": 200000, "output": 32768 }
+        },
+        "gpt-5.3-codex": {
+          "name": "GPT-5.3 Codex (especializado em código)",
+          "limit": { "context": 200000, "output": 65536 }
+        },
+        "gpt-5.5": {
+          "name": "GPT-5.5 (mais novo OpenAI)",
+          "limit": { "context": 200000, "output": 65536 }
+        },
+        "gpt-image-2": {
+          "name": "GPT Image 2 (geração de imagem)"
         }
       }
     }
@@ -216,11 +235,18 @@ echo ""
 echo "  3) Dentro do OpenCode, digita ${B}/models${N} e seleciona"
 echo "     algum modelo de ${B}CLIProxyAPI (INFOCO)${N}"
 echo ""
-echo "Modelos disponíveis:"
+echo "Modelos Claude (Anthropic):"
 echo "  • Claude Opus 4.7        (mais inteligente, mais lento)"
 echo "  • Claude Sonnet 4.5      (equilíbrio — recomendado pra trabalho)"
 echo "  • Claude Haiku 4.5       (rápido e barato — chat curto)"
 echo "  • Claude Opus 4.5        (alternativa ao 4.7)"
+echo ""
+echo "Modelos GPT/Codex (OpenAI):"
+echo "  • GPT-5.5                (mais novo)"
+echo "  • GPT-5.4                (flagship)"
+echo "  • GPT-5.4 Mini           (rápido/barato)"
+echo "  • GPT-5.3 Codex          (especializado em código)"
+echo "  • GPT Image 2            (geração de imagem)"
 echo ""
 echo "Pra cadastrar contrato/ARP/aditivo, é só pedir naturalmente:"
 echo "  • \"Cadastra esse contrato no SICC\" + anexa o PDF"

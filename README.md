@@ -75,14 +75,26 @@ A skill faz o fluxo **completo** sem te perguntar nada:
 
 Só interrompe se houver ambiguidade real (2+ matches igualmente prováveis) ou dado obrigatório faltando.
 
-## Modelos Claude disponíveis
+## Modelos disponíveis
 
+### Claude (Anthropic)
 | Modelo | Quando usar |
 |---|---|
 | `Claude Opus 4.7` | Tarefas mais complexas, raciocínio profundo |
 | `Claude Sonnet 4.5` | Equilíbrio — **recomendado pro dia a dia** |
 | `Claude Haiku 4.5` | Respostas rápidas, chat curto, mais barato |
 | `Claude Opus 4.5` | Alternativa ao 4.7 |
+
+### GPT / Codex (OpenAI)
+| Modelo | Quando usar |
+|---|---|
+| `GPT-5.5` | Mais novo da OpenAI |
+| `GPT-5.4` | Flagship — boa segunda opção quando Claude rate-limitar |
+| `GPT-5.4 Mini` | Rápido e barato — alternativa ao Haiku |
+| `GPT-5.3 Codex` | Especializado em código |
+| `GPT Image 2` | Geração de imagem |
+
+**Dica:** se Claude rate-limitar (todo mundo na conta da INFOCO), troca pra GPT-5.4 ou GPT-5.5 pra continuar trabalhando.
 
 ## Pré-requisitos
 
