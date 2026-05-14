@@ -99,14 +99,23 @@ Só interrompe se houver ambiguidade real (2+ matches igualmente prováveis) ou 
 ## Pré-requisitos
 
 - **Linux** (Fedora, Ubuntu, Debian, Arch, etc.) ou **macOS**
-- **OpenCode** instalado. Se não tiver:
-  ```bash
-  curl -fsSL https://opencode.ai/install | bash
-  ```
-  ou (com Node.js 20+):
-  ```bash
-  npm install -g opencode-ai
-  ```
+- **OpenCode** instalado.
+
+### Como instalar o OpenCode
+
+**Recomendado (instalador oficial bash):**
+```bash
+curl -fsSL https://opencode.ai/install | bash
+```
+
+Alternativa (com Node.js 20+):
+```bash
+npm install -g opencode-ai
+```
+
+### ⚠️ NÃO use o Flatpak
+
+O pacote Flatpak do opencode é mantido pela comunidade e atualmente apresenta erro `Failed to resolve transaction: Id is out of bitmap range` em algumas máquinas (cache OSTree corrompido). **Use o instalador oficial bash acima** — é mais leve, mais rápido e funciona em qualquer Linux.
 
 ## Problemas comuns
 
