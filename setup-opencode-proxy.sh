@@ -78,10 +78,17 @@ if [ -f "$OPENCODE_CONFIG" ]; then
   ok "Backup do config anterior: $BAK"
 fi
 
-# --- 5) Escrever opencode.json ---
+# --- 5) Escrever opencode.json (Claude proxy + MCP infoco) ---
 cat > "$OPENCODE_CONFIG" <<'EOF'
 {
   "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "infoco": {
+      "type": "remote",
+      "url": "https://compras.app.br/mcp/documentos",
+      "enabled": true
+    }
+  },
   "provider": {
     "cliproxy": {
       "npm": "@ai-sdk/openai-compatible",
@@ -112,7 +119,7 @@ cat > "$OPENCODE_CONFIG" <<'EOF'
   }
 }
 EOF
-ok "opencode.json escrito em: $OPENCODE_CONFIG"
+ok "opencode.json escrito em: $OPENCODE_CONFIG (proxy Claude + MCP infoco)"
 
 # --- 6) Adicionar CLIPROXY_API_KEY ao shell rc ---
 # Detecta shell
@@ -150,11 +157,39 @@ else
   echo "export CLIPROXY_API_KEY=$API_KEY" > "$RC"
 fi
 
-# --- 7) Tudo certo ---
+# --- 7) Instalar skill SICC + MCP no Codex CLI (sicc-codex-toolkit) ---
+echo ""
+info "Instalando skill SICC + MCP no Codex (sicc-codex-toolkit)..."
+
+if ! command -v npx >/dev/null 2>&1; then
+  warn "npx não encontrado — pulando instalação do sicc-codex-toolkit."
+  warn "Pra instalar depois, primeiro instala Node.js e roda:"
+  warn "  npx --yes sicc-codex-toolkit@latest setup"
+  SKIPPED_SICC=1
+else
+  if npx --yes sicc-codex-toolkit@latest setup 2>&1 | tail -20; then
+    ok "Skill SICC + MCP instalados no Codex (~/.codex/)"
+  else
+    warn "sicc-codex-toolkit setup falhou — tenta rodar manualmente:"
+    warn "  npx --yes sicc-codex-toolkit@latest setup"
+    SKIPPED_SICC=1
+  fi
+fi
+
+# --- 8) Tudo certo ---
 echo ""
 echo -e "${G}═══════════════════════════════════════════════════════════${N}"
 echo -e "${G}  ✓ Tudo pronto!${N}"
 echo -e "${G}═══════════════════════════════════════════════════════════${N}"
+echo ""
+echo "O que foi configurado:"
+echo "  ✓ OpenCode apontando pro proxy Claude da INFOCO"
+echo "  ✓ MCP infoco (SICC) registrado no OpenCode"
+if [ -z "${SKIPPED_SICC:-}" ]; then
+  echo "  ✓ Skill 'sicc-cadastrar-contrato' instalada no Codex (~/.codex/)"
+  echo "  ✓ MCP infoco também registrado no Codex (~/.codex/config.toml)"
+  echo "  ✓ Comando ${B}sicc-codex${N} disponível via ~/.codex/bin/"
+fi
 echo ""
 echo "Pra começar a usar:"
 echo ""
@@ -171,6 +206,14 @@ echo "  • Claude Opus 4.7        (mais inteligente, mais lento)"
 echo "  • Claude Sonnet 4.5      (equilíbrio — recomendado pra trabalho)"
 echo "  • Claude Haiku 4.5       (rápido e barato — chat curto)"
 echo "  • Claude Opus 4.5        (alternativa ao 4.7)"
+echo ""
+if [ -z "${SKIPPED_SICC:-}" ]; then
+  echo "Pra extração robusta de PDF/DOCX no SICC (opcional):"
+  echo "  ${B}sicc-codex bootstrap-python${N}"
+  echo ""
+fi
+echo "Quando usar o MCP infoco pela primeira vez, o OpenCode vai abrir"
+echo "uma tela de OAuth pra você logar no SICC com sua conta da INFOCO."
 echo ""
 echo "Dúvidas? Fala com o Fernando."
 echo ""
