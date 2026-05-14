@@ -101,9 +101,80 @@ Regras de preenchimento:
 - `unidades_participantes`: array de inteiros. Se documento não citar adesão de outras unidades, use `[unidade_gerenciadora_id]` (apenas a gestora).
 - `valor`: número (não string), em reais. Se o doc disser "R$ 64.635,00", envie `64635.0`.
 - `objeto` (contrato e licitação): use o objeto **completo do documento**, não substitua por descrição genérica.
-- `lotes`: se não houver itens explícitos, mande array vazio. Se houver itens, monte cada lote com `{ numero: 1, itens: [...] }` (item único + lote único quando documento for unitário).
+- `lotes`: **OBRIGATÓRIO seguir a seção "Extração de Itens" abaixo**. Nunca enviar vazio se o documento tiver tabela de itens. Nunca pular item.
 
 Chame `cadastrar_contrato_ata` com o payload. Reporte o ID retornado.
+
+#### Extração de Itens (CRÍTICO — não pular nenhum)
+
+**Onde os itens aparecem no documento:**
+- **Cláusula "Do Objeto"** ou **"Dos Bens/Serviços"** — descrição narrativa pode listar itens
+- **Anexo I** (mais comum) — tabela com colunas: Item, Descrição, Quantidade, Unidade, Valor Unitário, Valor Total
+- **Tabela de Preços / Planilha Orçamentária** — geralmente no fim do documento
+- **Mapa de Lances** (em pregão) — anexo separado às vezes
+- **ARP especificamente:** sempre tem tabela de itens com preços registrados — pode ter 1 a 200+ itens
+
+**Procedimento obrigatório de extração:**
+
+1. **Identifique a tabela de itens** no documento. Procure cabeçalhos como:
+   - "ITEM | DESCRIÇÃO | QUANTIDADE | UNID. | VALOR UNIT. | VALOR TOTAL"
+   - "Nº | Especificação | Qtd | Un | Preço Unit. | Preço Total"
+   - "LOTE 1 / LOTE 2 / ..." (quando há lotes separados)
+
+2. **Conte os itens** ANTES de extrair. Exemplo: "tabela tem 47 linhas de item (números 1 a 47)". Esse número vai ser usado pra validar no fim.
+
+3. **Extraia TODOS os itens**, linha por linha. Se a tabela quebrar entre páginas, continue na próxima. Se o documento tiver "(...continua)" ou "Continuação do Anexo I", siga até o final.
+
+4. **Estrutura de cada item:**
+   ```json
+   {
+     "numero": <int — número do item, geralmente 1, 2, 3, ...>,
+     "descricao": "<string — descrição completa, INCLUINDO especificação técnica/marca/modelo>",
+     "quantidade": <number>,
+     "unidade_medida": "<string — UN, KG, M, M², M³, L, SERV, HORA, MÊS, etc.>",
+     "valor_unitario": <number — em reais, sem máscara>,
+     "valor_total": <number — quantidade × valor_unitario>,
+     "marca": "<string — se aparecer 'Marca: X' ou 'Modelo: Y'>",
+     "codigo": "<string — se houver código de catálogo/CATMAT/CATSER>"
+   }
+   ```
+
+5. **Estrutura de cada lote:**
+   ```json
+   {
+     "numero": <int — número do lote, geralmente 1>,
+     "itens": [<array de itens>],
+     "valor_total": <number — soma de valor_total dos itens>
+   }
+   ```
+
+6. **Casos especiais:**
+   - **Documento com 1 lote único contendo N itens:** monte como `lotes: [{ numero: 1, itens: [...N itens] }]`
+   - **Documento com múltiplos lotes (LOTE 1, LOTE 2, ...):** monte um objeto por lote, cada um com seus próprios itens
+   - **Contrato com 1 único item global (ex: "construção de prédio"):** ainda assim monte `lotes: [{ numero: 1, itens: [{ numero: 1, descricao: <objeto>, quantidade: 1, unidade_medida: "SERV", valor_unitario: <valor_contrato>, valor_total: <valor_contrato> }] }]`
+   - **Aditivo de quantitativo:** itens novos seguem mesma estrutura, em campo separado do aditivo (ver Fluxo B)
+   - **Texto narrativo sem tabela explícita:** procure padrões "fornecimento de X unidades de Y, valor unitário R$ Z" e gere o item a partir do texto
+
+7. **Marcas/modelos:** se a descrição diz "Notebook DELL Latitude 5430 i7 16GB SSD 512GB", extraia `descricao` completo + `marca: "DELL Latitude 5430"`. Não jogue a marca fora.
+
+8. **Validação obrigatória ANTES de chamar `cadastrar_contrato_ata`:**
+
+   ```
+   COUNT_DOC = número de itens contado no documento (passo 2)
+   COUNT_EXTRACTED = soma de itens em todos os lotes
+   SOMA_ITENS = soma de valor_total de todos os itens
+   VALOR_CONTRATO = contrato_ata.valor
+
+   Verificar:
+   ✓ COUNT_DOC == COUNT_EXTRACTED (mesma contagem)
+   ✓ |SOMA_ITENS - VALOR_CONTRATO| < 0.10 (diferença ≤ 10 centavos por arredondamento)
+   ```
+
+   Se **qualquer validação falhar:** PARE, reporte qual item pode ter sido pulado/duplicado, NÃO cadastre.
+
+9. **Quantidades fracionárias:** aceite normalmente (ex: `quantidade: 12.5` para metros, kg, etc.).
+
+10. **Valores em real:** sempre número, não string. "R$ 1.234,56" → `1234.56`. Nunca arredonde — preserve casas decimais.
 
 ---
 
@@ -173,8 +244,15 @@ Quando o usuário enviar um arquivo:
    - **Modalidade**: na cláusula "Considerando" ou "Fundamentação" (DL, PE, INEX, etc.)
    - **Número do processo administrativo**: padrão "Processo Adm. Nº X" ou "Proc. X"
    - **Unidade gestora**: cabeçalho ou "Por meio da Secretaria de..."
+   - **ITENS** (Anexo I, Tabela de Preços, Planilha Orçamentária, Mapa de Lances) — siga obrigatoriamente a seção "Extração de Itens" do Fluxo A. Para ARP, espere tabela longa (até 200+ linhas). Para contrato unitário, ainda assim monte 1 lote + 1 item.
 
-3. Monte o payload conforme acima.
+3. **Para PDFs com tabelas:** se o texto extraído estiver bagunçado/colunas misturadas, tente extrair de novo com modo de layout (`pdftotext -layout arquivo.pdf -`) ou similar. Tabelas em PDF perdem estrutura sem flag de layout — e itens em coluna ficam embaralhados.
+
+4. **Para DOCX:** tabelas são preservadas em estrutura — extraia célula por célula.
+
+5. **Para imagens/PDFs escaneados:** se o texto não puder ser lido (PDF escaneado sem OCR), reporte ao usuário: "PDF parece escaneado/sem texto. Preciso de OCR ou que você cole os itens manualmente." NÃO cadastre nada cego.
+
+6. Monte o payload conforme acima.
 
 ---
 
@@ -185,8 +263,15 @@ Quando o usuário enviar um arquivo:
 - ❌ **Nunca** mande `unidades_participantes: []` vazio — use `[unidade_gerenciadora_id]` como fallback.
 - ❌ **Nunca** substitua o `objeto` do documento por resumo genérico. Use o texto completo.
 - ❌ **Nunca** cadastre se `search_contrato_by_numero_tool` encontrar o mesmo número.
+- ❌ **Nunca** pule item do documento. Se a tabela tem 47 linhas, o payload tem 47 itens — ponto.
+- ❌ **Nunca** cadastre se a validação de itens falhar (contagem ou soma divergente). PARE e reporte.
+- ❌ **Nunca** descarte marca/modelo/código do item. Preserve na `descricao` e/ou `marca`/`codigo`.
+- ❌ **Nunca** invente quantidade ou valor unitário "pra fechar a conta". Se não bate, é erro de extração — releia o doc.
 - ✅ **Sempre** rode resolução de IDs em paralelo quando possível (3 chamadas independentes em uma rodada).
 - ✅ **Sempre** valide formato de datas (ISO) e número (sem ponto de milhar).
+- ✅ **Sempre** conte itens ANTES de extrair e revalide a contagem ao final.
+- ✅ **Sempre** valide `soma de valor_total dos itens ≈ contrato_ata.valor` (diferença ≤ R$ 0,10).
+- ✅ **Sempre** preserve a ordem dos itens conforme o documento (item 1 do doc = item 1 do payload).
 - ✅ **Sempre** reporte o ID do registro criado ao final.
 
 ---
